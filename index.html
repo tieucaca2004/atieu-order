@@ -2610,7 +2610,9 @@ async function placeOrder(){
     `📞 ${gPhone}`,
     `📍 ${gAddr}`,
     `────────────────────`,
-    itemLinesNoPrice,
+    itemLinesWithPrice,
+    `────────────────────`,
+    `💵 TỔNG: ${f(sub)} (chưa gồm ship)`,
     `▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓`,
   ].join('\n');
 
