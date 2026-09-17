@@ -540,7 +540,7 @@ input[type=file]{display:none;}
 <div class="modal-overlay" id="rateOrderModal">
   <div class="modal-box" style="text-align:center;">
     <button class="modal-close" onclick="closeRateModal()">✕</button>
-    <div style="font-size:16px;font-weight:800;margin-bottom:4px;">⭐ Đánh giá đơn hàng</div>
+    <div id="rateModalTitle" style="font-size:16px;font-weight:800;margin-bottom:4px;">⭐ Đánh giá đơn hàng</div>
     <div style="font-size:12px;color:#888;margin-bottom:16px;">Cho A. Tiểu biết bạn cảm thấy thế nào nhé!</div>
     <div id="starPicker" style="margin-bottom:16px;"></div>
     <div style="text-align:left;">
@@ -1110,8 +1110,11 @@ const TG_CHATS = {
 
 async function sendTelegram(type, msg, withDoneBtn=false, retry=3) {
   const tokenMap = {order:'order', bep:'order', tn:'tn', ship:'ship'};
-  const token = TG_TOKENS[tokenMap[type]||type];
-  const chatId = TG_CHATS[type];
+  return sendTelegramRaw(TG_TOKENS[tokenMap[type]||type], TG_CHATS[type], msg, withDoneBtn, retry);
+}
+
+// Lõi gửi tin - dùng được với bất kỳ bot / nhóm nào (phục vụ cơ chế dự phòng bên dưới)
+async function sendTelegramRaw(token, chatId, msg, withDoneBtn=false, retry=3) {
   if(!token||!chatId) return false;
 
   const body = {chat_id: chatId, text: msg, parse_mode: 'HTML'};
@@ -1642,6 +1645,7 @@ function getReviewedOrders(){
   try{ return JSON.parse(localStorage.getItem('atieu_reviewed_orders')||'[]'); }catch(e){ return []; }
 }
 function markOrderReviewed(orderId){
+  if(!orderId) return;   // góp ý chung từ trang chủ, không gắn đơn nào
   const list = getReviewedOrders();
   if(!list.includes(orderId)){
     list.push(orderId);
@@ -1652,8 +1656,10 @@ function isOrderReviewed(orderId){ return getReviewedOrders().includes(orderId);
 
 let rateModalOrderId = '', rateModalStars = 0;
 function openRateModal(orderId){
-  rateModalOrderId = orderId;
+  rateModalOrderId = orderId || '';
   rateModalStars = 0;
+  const ttl = document.getElementById('rateModalTitle');
+  if(ttl) ttl.textContent = rateModalOrderId ? '⭐ Đánh giá đơn hàng' : '✍️ Góp ý cho quán';
   renderStarPicker();
   document.getElementById('rateComment').value = '';
   const nameHistory = loadContactHistory().name || [];
@@ -1690,7 +1696,8 @@ async function submitReview(){
   renderReviewsSection();
   if(currentScreen==='order') renderOrder(); // cập nhật nút đánh giá thành lời cảm ơn
   const stars = '★'.repeat(rateModalStars)+'☆'.repeat(5-rateModalStars);
-  const tgMsg = `⭐ ĐÁNH GIÁ MỚI — Đơn #${rateModalOrderId}\n${stars} (${rateModalStars}/5)\n👤 ${name}${comment?`\n💬 "${comment}"`:''}`;
+  const nguon = rateModalOrderId ? `Đơn #${rateModalOrderId}` : 'Góp ý từ trang chủ';
+  const tgMsg = `⭐ ĐÁNH GIÁ MỚI — ${nguon}\n${stars} (${rateModalStars}/5)\n👤 ${name}${comment?`\n💬 "${comment}"`:''}`;
   sendTelegram('order', tgMsg);
   alert('🙏 Cảm ơn bạn đã đánh giá!');
 }
@@ -1732,16 +1739,32 @@ function reviewCardHtml(r){
     </div>`;
 }
 
+// Góp ý không gắn với đơn nào - khách chưa từng đặt đơn vẫn góp ý được
+function openFeedbackModal(){ openRateModal(''); }
+
 function renderReviewsSection(){
   const section = document.getElementById('reviewsSummarySection');
   if(!section) return;
-  if(!REVIEWS.length){ section.style.display='none'; return; }
-  section.style.display='block';
+  section.style.display='block';   // luôn hiện ở trang chủ
+  const scoreEl = document.getElementById('reviewsAvgScore');
+  const starsEl = document.getElementById('reviewsAvgStars');
+  const countEl = document.getElementById('reviewsCount');
+  const listEl  = document.getElementById('reviewsPreviewList');
+  const btn = section.querySelector('button');
+  if(!REVIEWS.length){
+    scoreEl.textContent = '⭐';
+    starsEl.textContent = 'Chưa có đánh giá nào';
+    countEl.textContent = 'Hãy là người đầu tiên góp ý cho quán!';
+    listEl.innerHTML = '';
+    if(btn){ btn.textContent = '✍️ Góp ý'; btn.setAttribute('onclick','openFeedbackModal()'); }
+    return;
+  }
   const avg = REVIEWS.reduce((s,r)=>s+r.rating,0)/REVIEWS.length;
-  document.getElementById('reviewsAvgScore').textContent = avg.toFixed(1);
-  document.getElementById('reviewsAvgStars').textContent = '★'.repeat(Math.round(avg))+'☆'.repeat(5-Math.round(avg));
-  document.getElementById('reviewsCount').textContent = `${REVIEWS.length} đánh giá`;
-  document.getElementById('reviewsPreviewList').innerHTML = REVIEWS.slice(0,10).map(reviewCardHtml).join('');
+  scoreEl.textContent = avg.toFixed(1);
+  starsEl.textContent = '★'.repeat(Math.round(avg))+'☆'.repeat(5-Math.round(avg));
+  countEl.textContent = `${REVIEWS.length} đánh giá`;
+  listEl.innerHTML = REVIEWS.slice(0,10).map(reviewCardHtml).join('');
+  if(btn){ btn.textContent = 'Xem tất cả →'; btn.setAttribute('onclick','openAllReviewsModal()'); }
 }
 
 function openAllReviewsModal(){
@@ -1778,7 +1801,7 @@ function renderReviewsAdmin(){
           <span style="color:#f5a623;font-size:11px;">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
         </div>
         ${r.comment?`<div style="font-size:11px;color:#666;margin-top:3px;">${escapeHtml(r.comment)}</div>`:''}
-        <div style="font-size:10px;color:#aaa;margin-top:2px;">Đơn #${escapeHtml(r.orderId)} · ${r.dateStr}</div>
+        <div style="font-size:10px;color:#aaa;margin-top:2px;">${r.orderId?'Đơn #'+escapeHtml(r.orderId):'Góp ý chung'} · ${escapeHtml(r.dateStr)}</div>
       </div>
       <button class="del-item-btn" onclick="deleteReview('${r.id}')">🗑️</button>
     </div>`).join('');
@@ -2563,7 +2586,24 @@ async function placeOrder(){
   await sendTelegram('bep', msgBep, true);
   await delay(500);
   await sendTelegram('tn', msgTN);
-  if(orderType==='ship'){ await delay(500); await sendTelegram('ship', msgShip); }
+  if(orderType==='ship'){
+    await delay(500);
+    // 1) Gửi bằng bot riêng của nhóm Shipper
+    let shipOk = await sendTelegram('ship', msgShip);
+    if(!shipOk){
+      // 2) Không được -> thử lại bằng bot của Chủ quán (bot này đang chạy tốt ở nhóm Bếp)
+      await delay(500);
+      shipOk = await sendTelegramRaw(TG_TOKENS.order, TG_CHATS.ship, msgShip);
+    }
+    if(!shipOk){
+      // 3) Vẫn không được -> báo thẳng về Chủ quán để không mất đơn giao
+      await delay(500);
+      await sendTelegram('order',
+        '⚠️ <b>KHÔNG GỬI ĐƯỢC VÀO NHÓM SHIPPER</b>\n' +
+        'Vui lòng kiểm tra bot có còn trong nhóm Shipper không.\n' +
+        'Đơn giao bên dưới, tạm thời chuyển tay cho shipper:\n\n' + msgShip);
+    }
+  }
 
   orderDone=true;
   isOrderMore=false;
@@ -2751,9 +2791,9 @@ function renderOrder(){
       `:`<div style="display:flex;justify-content:space-between;font-weight:800;font-size:14px;margin-top:5px"><span>Tổng</span><span style="color:#C8391A">${f(grandTotal)}</span></div>`}
     </div>
     ${!isShip?`<button onclick="orderMore()" style="width:100%;padding:14px;background:linear-gradient(135deg,#1D9E75,#0d6b50);color:white;border:none;border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:4px;">🍜 GỌI THÊM MÓN</button>`:''}
-    ${isFinalStep ? (isOrderReviewed(currentOrderId)
+    ${isOrderReviewed(currentOrderId)
       ? `<div style="text-align:center;padding:12px;margin-top:8px;background:#FAECE7;border-radius:12px;color:#C8391A;font-size:12px;font-weight:700;">🙏 Cảm ơn bạn đã đánh giá đơn hàng này!</div>`
-      : `<button onclick="openRateModal('${currentOrderId}')" style="width:100%;padding:14px;margin-top:8px;background:linear-gradient(135deg,#f5a623,#e67e22);color:white;border:none;border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;">⭐ Đánh giá đơn hàng này</button>`) : ''}
+      : `<button onclick="openRateModal('${currentOrderId}')" style="width:100%;padding:14px;margin-top:8px;background:linear-gradient(135deg,#f5a623,#e67e22);color:white;border:none;border-radius:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;">⭐ Đánh giá & Góp ý</button>`}
     <button class="fanpage-btn" onclick="window.open('${FANPAGE}','_blank')">📘 Theo dõi Fanpage A. Tiểu</button>
     <button onclick="simpleResetOrder()" style="width:100%;padding:12px;margin-top:8px;background:#fff;color:#e74c3c;border:1.5px solid #e74c3c;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;">🗑️ Xóa đơn &amp; Đặt lại</button>
     <button class="new-order-btn" style="margin-top:8px" onclick="resetAll()">+ Đặt đơn mới</button>`;
@@ -4037,11 +4077,23 @@ syncMenuFromFirebase();
 syncShopHoursFromFirebase();
 renderReviewsSection();
 syncReviewsFromFirebase();
-// Khôi phục đơn hàng cũ nếu có - chuyển thẳng sang tab Đơn hàng
-if(orderDone && orderSnapshot){
-  renderOrder();
-  goTo('order');
-}
+// Đơn cũ đã được nạp sẵn ở restoreLastOrder(); màn "Theo dõi đơn" tự vẽ khi khách
+// bấm vào tab đó. Không tự nhảy màn hình nữa - mở app luôn ở trang chủ (Thực đơn).
+
+// Nhắc đánh giá: khách mở lại app sau bữa ăn mà đơn gần nhất chưa đánh giá.
+// Chỉ nhắc 1 lần cho mỗi đơn, và phải qua 30 phút kể từ lúc đặt (để khách ăn xong đã).
+const REVIEW_REMIND_AFTER_MS = 30*60*1000;
+(function remindReview(){
+  try{
+    if(!orderSnapshot || !orderSnapshot.id) return;
+    if(isOrderReviewed(orderSnapshot.id)) return;
+    const placed = Number(orderSnapshot.placedAt) || 0;
+    if(!placed || Date.now()-placed < REVIEW_REMIND_AFTER_MS) return;
+    if(localStorage.getItem('atieu_review_prompted') === orderSnapshot.id) return;
+    localStorage.setItem('atieu_review_prompted', orderSnapshot.id);
+    setTimeout(()=>openRateModal(orderSnapshot.id), 1500);
+  }catch(e){}
+})();
 // Trước đây cứ 30 giây tải lại TOÀN BỘ menu kèm ảnh base64 và 60 giây tải lại
 // TOÀN BỘ ảnh món, bất kể có thay đổi hay không -> rất tốn 4G và pin của khách.
 // Giờ chỉ hỏi mốc thời gian (~15 byte); có thay đổi thật mới tải về.
@@ -4117,7 +4169,12 @@ function renderHistory(){
         <div style="font-size:14px;font-weight:800;color:#C8391A;">${f(total)}</div>
       </div>
       <div style="font-size:11px;color:#666;margin-bottom:10px;line-height:1.5;">${itemList}${more}</div>
-      <button onclick="reorder(${i})" style="width:100%;padding:9px;background:#C8391A;color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Đặt lại đơn này</button>
+      <div style="display:flex;gap:6px;">
+        <button onclick="reorder(${i})" style="flex:1;padding:9px;background:#C8391A;color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">🔄 Đặt lại</button>
+        ${isOrderReviewed(o.id)
+          ? `<div style="flex:1;padding:9px;background:#FAECE7;color:#C8391A;border-radius:8px;font-size:12px;font-weight:700;text-align:center;">🙏 Đã đánh giá</div>`
+          : `<button onclick="openRateModal('${o.id}')" style="flex:1;padding:9px;background:linear-gradient(135deg,#f5a623,#e67e22);color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">⭐ Đánh giá</button>`}
+      </div>
     </div>`;
   }).join('');
 }
