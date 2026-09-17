@@ -2627,7 +2627,9 @@ async function placeOrder(){
   await sendTelegram('bep', msgBep, true);
   await delay(500);
   await sendTelegram('tn', msgTN);
-  if(orderType==='ship'){
+  // Chỉ đơn GIAO HÀNG mới báo nhóm Shipper. Đơn "Khách đến lấy món" tuy dùng chung
+  // luồng mang về (orderType='ship') nhưng khách tự tới quán lấy, shipper không cần biết.
+  if(orderType==='ship' && !pickupMode){
     await delay(500);
     // 1) Gửi bằng bot riêng của nhóm Shipper
     let shipOk = await sendTelegram('ship', msgShip);
@@ -2863,7 +2865,8 @@ async function cancelOrder(orderId){
   await sendTelegram('order', msg);
   await sendTelegram('bep', msg);
   await sendTelegram('tn', msg);
-  if(orderType==='ship') await sendTelegram('ship', msg);
+  // Đơn "Khách đến lấy món" không báo nhóm Shipper lúc đặt, nên huỷ cũng không báo
+  if(orderType==='ship' && !pickupMode) await sendTelegram('ship', msg);
 
   // Hiện thông báo và reset
   alert('✅ Đã gửi thông báo hủy đơn về quán!');
@@ -2881,7 +2884,8 @@ async function simpleResetOrder(){
   await sendTelegram('order', msg);
   await sendTelegram('bep', msg);
   await sendTelegram('tn', msg);
-  if(orderType==='ship') await sendTelegram('ship', msg);
+  // Đơn "Khách đến lấy món" không báo nhóm Shipper lúc đặt, nên xoá cũng không báo
+  if(orderType==='ship' && !pickupMode) await sendTelegram('ship', msg);
 
   resetAll();
 }
