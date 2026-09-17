@@ -3770,6 +3770,15 @@ async function syncDishImagesFromFirebase(){
 const DISH_IMG_MAX_PX = 480;
 const DISH_IMG_QUALITY = 0.72;
 const DISH_IMG_MAX_LEN = 120000; // ~90KB, lớn hơn thì nén lại
+
+// ── TỰ GIẢM 50% KHI TẢI ẢNH LÊN ──
+// Ảnh mới tải lên được lưu ở 50% kích thước và 50% chất lượng so với giới hạn cũ:
+//   ảnh món  480px / 0.72  ->  240px / 0.36
+//   ảnh nền  800px / 0.75  ->  400px / 0.375
+// Chỉ áp dụng cho ảnh MỚI tải lên; ảnh cũ đang lưu giữ nguyên như hiện tại.
+const UPLOAD_SHRINK_RATIO = 0.5;
+const BG_IMG_MAX_PX = 800;
+const BG_IMG_QUALITY = 0.75;
 function shrinkDataUrl(dataUrl){
   return new Promise(resolve=>{
     const im = new Image();
@@ -3888,16 +3897,19 @@ function openCrop(key, dataUrl){
 function confirmCrop(){
   if(!cropperInstance) return;
   const isDishImg = cropTargetKey.startsWith('dish_');
+  // Giảm 50% kích thước + 50% chất lượng so với giới hạn cũ khi tải ảnh lên
+  const uploadMaxPx = Math.round((isDishImg ? DISH_IMG_MAX_PX : BG_IMG_MAX_PX) * UPLOAD_SHRINK_RATIO);
+  const uploadQuality = (isDishImg ? DISH_IMG_QUALITY : BG_IMG_QUALITY) * UPLOAD_SHRINK_RATIO;
   const canvas = cropperInstance.getCroppedCanvas({
-    maxWidth: isDishImg ? DISH_IMG_MAX_PX : 800,
-    maxHeight: isDishImg ? DISH_IMG_MAX_PX : 800,
+    maxWidth: uploadMaxPx,
+    maxHeight: uploadMaxPx,
     fillColor: '#fff',
     imageSmoothingEnabled: true,
     imageSmoothingQuality: 'high',
   });
   let dataUrl;
   try{
-    dataUrl = canvas.toDataURL('image/jpeg', isDishImg ? DISH_IMG_QUALITY : 0.75);
+    dataUrl = canvas.toDataURL('image/jpeg', uploadQuality);
   }catch(err){
     // Ảnh từ link không cho phép CORS -> không nén/cắt được, dùng thẳng ảnh gốc
     dataUrl = cropSourceUrl;
