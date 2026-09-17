@@ -1021,7 +1021,7 @@ const FB_KEY = 'AIzaSyCzUIqPo1M79yE4NT29KkjM0CuhT8MXwoc';
 async function fbSetOrder(orderId, data) {
   try {
     await fetch(`${FB_URL}/orders/${orderId}.json?auth=${FB_KEY}`, {
-      method: 'PUT',
+      method: 'PATCH',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({...data, updatedAt: Date.now()})
     });
@@ -1615,8 +1615,23 @@ setInterval(renderShopStatus, 60000); // tự cập nhật mỗi phút (qua gi�
 function escapeHtml(s){
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// Bản ghi đánh giá hỏng (thiếu/sai số sao) làm điểm trung bình thành NaN và
+// hiện "NaN / undefined" trên trang chủ. Chỉ nhận đánh giá có số sao 1-5.
+function sanitizeReviews(list){
+  return (Array.isArray(list)?list:[]).filter(r=>{
+    const n = Number(r && r.rating);
+    return r && typeof r==='object' && Number.isFinite(n) && n>=1 && n<=5;
+  }).map(r=>({
+    ...r,
+    rating: Math.round(Number(r.rating)),
+    name: r.name || 'Khách ẩn danh',
+    comment: r.comment || '',
+    dateStr: r.dateStr || '',
+    time: Number(r.time) || 0
+  }));
+}
 function loadReviews(){
-  try{ return JSON.parse(localStorage.getItem('atieu_reviews')||'[]'); }catch(e){ return []; }
+  try{ return sanitizeReviews(JSON.parse(localStorage.getItem('atieu_reviews')||'[]')); }catch(e){ return []; }
 }
 function saveReviewsLocal(){
   try{ localStorage.setItem('atieu_reviews', JSON.stringify(REVIEWS)); }catch(e){}
@@ -1701,7 +1716,7 @@ async function syncReviewsFromFirebase(){
     const res = await fetch(`${FB_URL}/reviews.json?t=${Date.now()}`);
     const data = await res.json();
     if(data){
-      REVIEWS = Object.values(data).sort((a,b)=>b.time-a.time);
+      REVIEWS = sanitizeReviews(Object.values(data)).sort((a,b)=>b.time-a.time);
       saveReviewsLocal();
       renderReviewsSection();
       renderReviewsAdmin();
@@ -4027,10 +4042,25 @@ if(orderDone && orderSnapshot){
   renderOrder();
   goTo('order');
 }
-// Tự động kiểm tra menu mới mỗi 30 giây
-setInterval(syncMenuFromFirebase, 30000);
-// Sync ảnh món mỗi 60 giây
-setInterval(syncDishImagesFromFirebase, 60000);
+// Trước đây cứ 30 giây tải lại TOÀN BỘ menu kèm ảnh base64 và 60 giây tải lại
+// TOÀN BỘ ảnh món, bất kể có thay đổi hay không -> rất tốn 4G và pin của khách.
+// Giờ chỉ hỏi mốc thời gian (~15 byte); có thay đổi thật mới tải về.
+async function syncIfMenuChanged(){
+  if(document.hidden) return;              // app đang chạy nền thì không tải
+  try{
+    const r = await fetch(`${FB_URL}/settings/atieu_menu/updatedAt.json?t=${Date.now()}`);
+    if(!r.ok) return;
+    const fbTime = Number(await r.json()) || 0;
+    const localTime = parseInt(localStorage.getItem('atieu_menu_updated')||'0');
+    const noLocalMenu = !localStorage.getItem('atieu_menu');
+    if(fbTime <= localTime && !noLocalMenu) return;   // không có gì mới -> dừng
+  }catch(e){ return; }
+  await syncMenuFromFirebase();
+  await syncDishImagesFromFirebase();
+}
+setInterval(syncIfMenuChanged, 30000);
+// Mở lại app từ nền -> kiểm tra ngay, không đợi hết 30 giây
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) syncIfMenuChanged(); });
 // Sync ảnh ngay khi mở app
 syncDishImagesFromFirebase();
 // Nén ảnh món quá lớn đang lưu trên máy (tránh đầy bộ nhớ làm mất menu)
