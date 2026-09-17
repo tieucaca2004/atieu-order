@@ -1,0 +1,31 @@
+# Cấu hình Netlify cho atieu.com
+# Web tĩnh, không cần bước build - toàn bộ file nằm ngay thư mục gốc.
+
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Android bắt buộc đọc được file này để app chạy toàn màn hình (không thanh địa chỉ)
+[[headers]]
+  for = "/.well-known/assetlinks.json"
+  [headers.values]
+    Content-Type = "application/json"
+
+# Tài liệu nội bộ - giữ trong repo cho chủ quán đọc, KHÔNG cho truy cập từ web
+[[redirects]]
+  from = "/HUONG-DAN-BAO-MAT.md"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/firebase-rules.json"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/README.md"
+  to = "/index.html"
+  status = 404

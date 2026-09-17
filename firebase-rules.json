@@ -1,0 +1,41 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "orders": {
+      "$orderId": {
+        ".read": true,
+        ".write": true
+      }
+    },
+
+    "revenue": {
+      "$ngay": {
+        ".read": true,
+        ".write": true
+      }
+    },
+
+    "reviews": {
+      ".read": true,
+      "$reviewId": {
+        ".write": true
+      }
+    },
+
+    "dish_images": {
+      ".read": true,
+      "$dishId": {
+        ".write": true
+      }
+    },
+
+    "settings": {
+      ".read": true,
+      "$key": {
+        ".write": true
+      }
+    }
+  }
+}

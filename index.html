@@ -1111,12 +1111,34 @@ const TG_CHATS = {
 
 async function sendTelegram(type, msg, withDoneBtn=false, retry=3) {
   const tokenMap = {order:'order', bep:'order', tn:'tn', ship:'ship'};
-  return sendTelegramRaw(TG_TOKENS[tokenMap[type]||type], TG_CHATS[type], msg, withDoneBtn, retry);
+  const botKey = tokenMap[type]||type;
+  return sendTelegramRaw(botKey, TG_TOKENS[botKey], TG_CHATS[type], msg, withDoneBtn, retry);
+}
+
+// ── GỬI QUA MÁY CHỦ TRUNG GIAN ──
+// Token bot nằm ở biến môi trường trên Netlify chứ không nằm trong file này, nên
+// người ngoài xem mã nguồn web (hay bung file APK) không lấy được token để gửi đơn giả.
+// Máy chủ chưa cấu hình xong thì tự quay về cách gửi cũ -> không gián đoạn nhận đơn.
+const TG_PROXY = '/.netlify/functions/tg';
+let tgProxySan = null;   // null = chưa thử; false = chưa sẵn sàng, khỏi thử lại
+
+async function sendViaProxy(botKey, chatId, msg, replyMarkup){
+  if(tgProxySan === false) return false;
+  try{
+    const res = await fetch(TG_PROXY, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({bot: botKey, chat_id: chatId, text: msg, reply_markup: replyMarkup})
+    });
+    if(res.status === 404 || res.status === 503){ tgProxySan = false; return false; }
+    const data = await res.json().catch(()=>({ok:false}));
+    if(data.ok){ tgProxySan = true; return true; }
+    return false;
+  }catch(e){ tgProxySan = false; return false; }
 }
 
 // Lõi gửi tin - dùng được với bất kỳ bot / nhóm nào (phục vụ cơ chế dự phòng bên dưới)
-async function sendTelegramRaw(token, chatId, msg, withDoneBtn=false, retry=3) {
-  if(!token||!chatId) return false;
+async function sendTelegramRaw(botKey, token, chatId, msg, withDoneBtn=false, retry=3) {
+  if(!chatId) return false;
 
   const body = {chat_id: chatId, text: msg, parse_mode: 'HTML'};
   if(withDoneBtn){
@@ -1127,6 +1149,11 @@ async function sendTelegramRaw(token, chatId, msg, withDoneBtn=false, retry=3) {
       ]]
     };
   }
+
+  // 1) Ưu tiên gửi qua máy chủ trung gian (token không lộ)
+  if(await sendViaProxy(botKey, chatId, msg, body.reply_markup)) return true;
+  // 2) Máy chủ chưa sẵn sàng -> gửi thẳng như trước, không để mất đơn
+  if(!token) return false;
 
   for(let i=0; i<retry; i++){
     try{
@@ -1698,7 +1725,7 @@ async function submitReview(){
   if(currentScreen==='order') renderOrder(); // cập nhật nút đánh giá thành lời cảm ơn
   const stars = '★'.repeat(rateModalStars)+'☆'.repeat(5-rateModalStars);
   const nguon = rateModalOrderId ? `Đơn #${rateModalOrderId}` : 'Góp ý từ trang chủ';
-  const tgMsg = `⭐ ĐÁNH GIÁ MỚI — ${nguon}\n${stars} (${rateModalStars}/5)\n👤 ${name}${comment?`\n💬 "${comment}"`:''}`;
+  const tgMsg = `⭐ ĐÁNH GIÁ MỚI — ${nguon}\n${stars} (${rateModalStars}/5)\n👤 ${escapeHtml(name)}${comment?`\n💬 "${escapeHtml(comment)}"`:''}`;
   sendTelegram('order', tgMsg);
   alert('🙏 Cảm ơn bạn đã đánh giá!');
 }
@@ -1895,14 +1922,14 @@ function renderMenu(){
 
 function dishCard(m){
   const q=cart[m.id]?Object.values(cart[m.id]).reduce((a,b)=>a+b,0):0;
-  const imgHtml=m.img?`<img src="${m.img}" alt="${m.name}">`:(loadBg('dish')?`<img src="${loadBg('dish')}" alt="">`:m.e);
+  const imgHtml=m.img?`<img src="${escapeHtml(m.img)}" alt="${escapeHtml(m.name)}">`:(loadBg('dish')?`<img src="${escapeHtml(loadBg('dish'))}" alt="">`:escapeHtml(m.e));
   const imgBg=m.img||loadBg('dish')?'':''+m.bg;
   return `<div class="dish-card" onclick="flipAndOpen(this,${m.id})">
     <div class="dish-card-img ${imgBg}">${imgHtml}</div>
     <div class="dish-card-body">
-      <div class="dish-card-name">${m.name}</div>
-      <div class="dish-card-sub">${m.sub}</div>
-      ${m.ingredients?`<div style="font-size:9px;color:#aaa;margin-bottom:4px;text-transform:none;font-style:italic;">${m.ingredients}</div>`:''}
+      <div class="dish-card-name">${escapeHtml(m.name)}</div>
+      <div class="dish-card-sub">${escapeHtml(m.sub)}</div>
+      ${m.ingredients?`<div style="font-size:9px;color:#aaa;margin-bottom:4px;text-transform:none;font-style:italic;">${escapeHtml(m.ingredients)}</div>`:''}
       <div class="dish-card-bottom">
         <div class="dish-card-price">${f(m.price)}</div>
         ${q===0
@@ -1927,12 +1954,12 @@ function openTopping(id){
   const m=MENU.find(x=>x.id===id);
   currentDish=m;selectedToppings={};selectedSauce='';selectedPan='';selectedIce='';selectedCup='';
   const zoomSrc=m.img||loadBg('dish')||'';
-  const imgHtml=m.img?`<img src="${m.img}">`:(loadBg('dish')?`<img src="${loadBg('dish')}">`:'');
+  const imgHtml=m.img?`<img src="${escapeHtml(m.img)}">`:(loadBg('dish')?`<img src="${escapeHtml(loadBg('dish'))}">`:'');
   let html=`<div class="modal-dish-img ${m.img||loadBg('dish')?'':m.bg}" ${zoomSrc?`onclick="openImgZoomForCurrentDish()" style="cursor:zoom-in;position:relative;"`:''}>
     ${imgHtml||m.e}
     ${zoomSrc?`<div style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.55);color:#fff;font-size:10px;padding:3px 9px;border-radius:20px;">🔍 Chạm để phóng to</div>`:''}
   </div>
-  <div class="modal-title">${m.name}</div>
+  <div class="modal-title">${escapeHtml(m.name)}</div>
   <div class="modal-price">${f(m.price)}</div>`;
 
   // Tùy chọn áp chảo - chỉ cho hủ tiếu
@@ -1972,7 +1999,7 @@ function openTopping(id){
     html+=`<div class="section-head">➕ Thêm topping</div><div class="topping-list">`;
     TOPPINGS.forEach(t=>{
       html+=`<div class="topping-item" id="tp-${t.id}" onclick="toggleTopping(${t.id})">
-        <div class="topping-left"><div class="topping-check" id="tpc-${t.id}"></div><div class="topping-name">${t.name}</div></div>
+        <div class="topping-left"><div class="topping-check" id="tpc-${t.id}"></div><div class="topping-name">${escapeHtml(t.name)}</div></div>
         <div class="topping-price">+${f(t.price)}</div>
       </div>`;
     });
@@ -2282,12 +2309,12 @@ function renderCart(){
     ${items.map((item)=>{
       const tp=item.toppings.reduce((a,t)=>a+t.price,0);
       const details=[item.pan,item.sauce,item.ice,item.cup,item.toppings.map(t=>t.name).join(', ')].filter(Boolean).join(' · ');
-      const imgHtml=item.m.img?`<img src="${item.m.img}">`:(loadBg('dish')?`<img src="${loadBg('dish')}">`:'');
+      const imgHtml=item.m.img?`<img src="${escapeHtml(item.m.img)}">`:(loadBg('dish')?`<img src="${escapeHtml(loadBg('dish'))}">`:'');
       const noteForItem = cartNotes[item.key]||'';
       return`<div class="cart-item">
         <div class="ci-img ${item.m.img||loadBg('dish')?'':item.m.bg}">${imgHtml||item.m.e}</div>
         <div class="ci-info">
-          <div class="ci-name">${item.m.name}</div>
+          <div class="ci-name">${escapeHtml(item.m.name)}</div>
           ${details?`<div class="ci-detail">${details}</div>`:''}
           ${noteForItem?`<div style="font-size:10px;color:#e67e22;margin-top:2px;">📝 ${noteForItem}</div>`:''}
           <div class="ci-unit">${f(item.m.price+tp)} × ${item.qty}</div>
@@ -2488,24 +2515,28 @@ async function placeOrder(){
 
   const itemLinesNoPrice = items.map(item=>{
     const details=[item.pan,item.sauce,item.ice,item.cup,...item.toppings.map(t=>t.name)].filter(Boolean).join(' · ');
-    return`• ${item.m.name}${details?' ('+details+')':''} × ${item.qty}`;
+    return`• ${escapeHtml(item.m.name)}${details?' ('+escapeHtml(details)+')':''} × ${item.qty}`;
   }).join('\n');
 
   const itemLinesWithPrice = items.map(item=>{
     const tp=item.toppings.reduce((a,t)=>a+t.price,0);
     const details=[item.pan,item.sauce,item.ice,item.cup,...item.toppings.map(t=>t.name)].filter(Boolean).join(' · ');
-    return`• ${item.m.name}${details?' ('+details+')':''} × ${item.qty} = ${f((item.m.price+tp)*item.qty)}`;
+    return`• ${escapeHtml(item.m.name)}${details?' ('+escapeHtml(details)+')':''} × ${item.qty} = ${f((item.m.price+tp)*item.qty)}`;
   }).join('\n');
 
+  // Bản đã lọc ký tự đặc biệt, CHỈ dùng để dựng tin Telegram (parse_mode HTML).
+  // Tên/địa chỉ/ghi chú chứa < hoặc & làm Telegram trả lỗi 400 -> tin không tới bếp.
+  const gName = escapeHtml(name), gPhone = escapeHtml(phone);
+  const gAddr = escapeHtml(addr), gNote = escapeHtml(note);
   const loaiDon = orderType==='ship'?'GIAO HANG':'AN TAI QUAN';
   const ttTT = isShipOrder?(selectedPayment==='qr'?'CK (da QR)':'Tien mat'):'';
   const giaoStr = selectedDeliveryTime ? ' | '+selectedDeliveryTime : '';
   const themLabel = isOrderMore ? '🔄 GỌI THÊM' : '🆕 ĐƠN MỚI';
-  const banStr = orderType==='ship' ? `📍 ${addr}` : `🪑 BÀN ${addr.replace(/[^0-9]/g,'')||addr.toUpperCase()}`;
+  const banStr = orderType==='ship' ? `📍 ${gAddr}` : `🪑 BÀN ${escapeHtml(addr.replace(/[^0-9]/g,'')||addr.toUpperCase())}`;
 
   // ═══ TIN BẾP ═══ (khung đơn giản, chỉ cần biết làm gì)
   const loaiLabel = orderType==='ship' ? 'MANG VỀ' : 'ĐẶT BÀN';
-  const banNum = addr.replace(/[^0-9]/g,'')||addr.toUpperCase();
+  const banNum = escapeHtml(addr.replace(/[^0-9]/g,'')||addr.toUpperCase());
   const themStr = isOrderMore
     ? `🔄 <b>BÀN ${banNum} — GỌI THÊM</b>`
     : `🆕 <b>${loaiLabel}${orderType!=='ship'?' — BÀN '+banNum:''}</b>`;
@@ -2514,10 +2545,10 @@ async function placeOrder(){
     `┌─────────────────────`,
     `│ 👨‍🍳 ${themStr}`,
     `│ ⏰ <b>${timeStr}</b>${giaoStr}`,
-    orderType==='ship' ? `│ 📍 <b>${addr}</b>` : null,
+    orderType==='ship' ? `│ 📍 <b>${gAddr}</b>` : null,
     `├─────────────────────`,
     ...itemLinesNoPrice.split('\n').map(l=>`│ ${l}`),
-    note ? `├─────────────────────\n│ 📝 <i>${note}</i>` : null,
+    note ? `├─────────────────────\n│ 📝 <i>${gNote}</i>` : null,
     `└─────────────────────`,
   ].filter(Boolean).join('\n');
 
@@ -2541,8 +2572,8 @@ async function placeOrder(){
         `◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆`,
         `🛵 ${themLabel} #${currentOrderId}`,
         `⏰ ${timeStr}${giaoStr}`,
-        `👤 ${name} | 📞 ${phone}`,
-        `📍 ${addr}`,
+        `👤 ${gName} | 📞 ${gPhone}`,
+        `📍 ${gAddr}`,
         `────────────────────`,
         itemLinesNoPrice,
         `────────────────────`,
@@ -2556,7 +2587,7 @@ async function placeOrder(){
         `${banStr}`,
         `────────────────────`,
         itemLinesNoPrice,
-        note ? `📝 ${note}` : null,
+        note ? `📝 ${gNote}` : null,
         `◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆◆`,
       ].filter(Boolean).join('\n');
 
@@ -2566,9 +2597,9 @@ async function placeOrder(){
     `🛵 ĐƠN GIAO`,
     `⏰ ${timeStr}${giaoStr}`,
     `────────────────────`,
-    `👤 ${name}`,
-    `📞 ${phone}`,
-    `📍 ${addr}`,
+    `👤 ${gName}`,
+    `📞 ${gPhone}`,
+    `📍 ${gAddr}`,
     `────────────────────`,
     itemLinesNoPrice,
     `▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓`,
@@ -2594,7 +2625,7 @@ async function placeOrder(){
     if(!shipOk){
       // 2) Không được -> thử lại bằng bot của Chủ quán (bot này đang chạy tốt ở nhóm Bếp)
       await delay(500);
-      shipOk = await sendTelegramRaw(TG_TOKENS.order, TG_CHATS.ship, msgShip);
+      shipOk = await sendTelegramRaw('order', TG_TOKENS.order, TG_CHATS.ship, msgShip);
     }
     if(!shipOk){
       // 3) Vẫn không được -> báo thẳng về Chủ quán để không mất đơn giao
@@ -2722,7 +2753,7 @@ function renderOrder(){
       const lineTotal = (item.price+tp)*item.qty;
       total += lineTotal;
       itemsHtml += `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:#555">
-        <span>${item.e} ${item.name}${det?' ('+det+')':''} ×${item.qty}</span>
+        <span>${escapeHtml(item.e)} ${escapeHtml(item.name)}${det?' ('+escapeHtml(det)+')':''} ×${item.qty}</span>
         <span>${f(lineTotal)}</span>
       </div>`;
     });
@@ -2732,7 +2763,7 @@ function renderOrder(){
     items.forEach(item=>{
       const tp=item.toppings.reduce((a,t)=>a+t.price,0);
       const det=[item.pan,item.sauce,item.ice,item.cup,...item.toppings.map(t=>t.name)].filter(Boolean).join(', ');
-      itemsHtml+=`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:#555"><span>${item.m.e} ${item.m.name}${det?' ('+det+')':''} ×${item.qty}</span><span>${f((item.m.price+tp)*item.qty)}</span></div>`;
+      itemsHtml+=`<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;color:#555"><span>${escapeHtml(item.m.e)} ${escapeHtml(item.m.name)}${det?' ('+escapeHtml(det)+')':''} ×${item.qty}</span><span>${f((item.m.price+tp)*item.qty)}</span></div>`;
     });
   }
 
@@ -2779,7 +2810,7 @@ function renderOrder(){
         <div style="margin-top:10px;padding-top:10px;border-top:2px dashed #eee;">
           <div style="font-size:11px;font-weight:700;color:#e67e22;margin-bottom:6px;">🔄 GỌI THÊM (${snap.extraOrders.length} lần)</div>
           ${snap.extraOrders.map((o,i)=>`
-            <div style="font-size:11px;color:#888;margin-bottom:4px;">Lần ${i+1} - ${o.time}: ${o.items.map(item=>`${item.name} ×${item.qty}`).join(', ')} — <b>${f(o.sub)}</b></div>
+            <div style="font-size:11px;color:#888;margin-bottom:4px;">Lần ${i+1} - ${o.time}: ${o.items.map(item=>`${escapeHtml(item.name)} ×${item.qty}`).join(', ')} — <b>${f(o.sub)}</b></div>
           `).join('')}
         </div>
       `:''}
@@ -3091,11 +3122,11 @@ function renderAdminSections(){
       ${grouped[cat].map(m=>`
         <div class="admin-item" id="aitem-${m.id}">
           <div style="position:relative;flex-shrink:0;">
-            <div class="admin-thumb" onclick="pickImage(${m.id})">${m.img?`<img src="${m.img}">`:`<span>${m.e}</span>`}<div class="admin-thumb-overlay">📷</div></div>
+            <div class="admin-thumb" onclick="pickImage(${m.id})">${m.img?`<img src="${escapeHtml(m.img)}">`:`<span>${escapeHtml(m.e)}</span>`}<div class="admin-thumb-overlay">📷</div></div>
             <button onclick="event.stopPropagation();pickImageLink(${m.id})" title="Dùng ảnh từ link" style="position:absolute;bottom:-4px;right:-4px;width:21px;height:21px;border-radius:50%;background:#1565C0;color:white;border:2px solid #fff;font-size:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;">🔗</button>
           </div>
           <div class="admin-info">
-            <input class="a-input" id="aname-${m.id}" value="${m.name}">
+            <input class="a-input" id="aname-${m.id}" value="${escapeHtml(m.name)}">
             <div class="a-row">
               <input class="a-price" id="aprice-${m.id}" type="number" value="${m.price}">
               <span style="font-size:10px;color:#aaa">đ</span>
@@ -3184,7 +3215,7 @@ function saveAdmin(){
 function renderToppingAdmin(){
   document.getElementById('toppingAdminList').innerHTML=TOPPINGS.map((t,i)=>`
     <div class="topping-admin-item">
-      <input value="${t.name}" onchange="TOPPINGS[${i}].name=this.value">
+      <input value="${escapeHtml(t.name)}" onchange="TOPPINGS[${i}].name=this.value">
       <input type="number" value="${t.price}" onchange="TOPPINGS[${i}].price=parseInt(this.value)||0" style="width:75px">
       <span style="font-size:10px;color:#aaa">đ</span>
       <button class="del-item-btn" onclick="TOPPINGS.splice(${i},1);renderToppingAdmin()">🗑️</button>
@@ -3335,11 +3366,11 @@ function renderStaffMenu(){
   const list = MENU.filter(m => m.cat === staffActiveCat);
   grid.innerHTML = list.map(m=>{
     const q = staffCart[m.id]||0;
-    const imgHtml = m.img ? `<img src="${m.img}" style="width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0;">` : `<div style="width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;" class="${m.bg}">${m.e}</div>`;
+    const imgHtml = m.img ? `<img src="${escapeHtml(m.img)}" style="width:44px;height:44px;object-fit:cover;border-radius:8px;flex-shrink:0;">` : `<div style="width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;" class="${m.bg}">${m.e}</div>`;
     return`<div style="display:flex;align-items:center;gap:10px;padding:8px 6px;border-bottom:1px solid #f5f5f5;background:${q>0?'#fff9f7':'#fff'};">
       ${imgHtml}
       <div style="flex:1;min-width:0;">
-        <div style="font-size:12px;font-weight:700;line-height:1.3;">${m.name}</div>
+        <div style="font-size:12px;font-weight:700;line-height:1.3;">${escapeHtml(m.name)}</div>
         <div style="font-size:11px;color:#C8391A;font-weight:700;margin-top:2px;">${f(m.price)}</div>
       </div>
       ${q===0
@@ -3371,7 +3402,7 @@ function renderStaffCart(){
   el.innerHTML=ids.map(id=>{
     const m=MENU.find(x=>x.id===id);
     return`<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;">
-      <span>${m.e} ${m.name} ×${staffCart[id]}</span>
+      <span>${escapeHtml(m.e)} ${escapeHtml(m.name)} ×${staffCart[id]}</span>
       <span style="color:#C8391A;font-weight:700;">${f(m.price*staffCart[id])}</span>
     </div>`;
   }).join('')+`<div style="border-top:1px solid #eee;margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;font-weight:800;font-size:14px;">
@@ -3394,12 +3425,12 @@ async function staffSendOrder(){
   const now=new Date();
   const timeStr=now.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'});
   const orderId='NV'+Math.floor(Math.random()*9000+1000);
-  const itemLines=ids.map(id=>{const m=MENU.find(x=>x.id===id);return`• ${m.name} × ${staffCart[id]}`;}).join('\n');
-  const itemLinesPrice=ids.map(id=>{const m=MENU.find(x=>x.id===id);return`• ${m.name} × ${staffCart[id]} = ${f(m.price*staffCart[id])}`;}).join('\n');
+  const itemLines=ids.map(id=>{const m=MENU.find(x=>x.id===id);return`• ${escapeHtml(m.name)} × ${staffCart[id]}`;}).join('\n');
+  const itemLinesPrice=ids.map(id=>{const m=MENU.find(x=>x.id===id);return`• ${escapeHtml(m.name)} × ${staffCart[id]} = ${f(m.price*staffCart[id])}`;}).join('\n');
   const total=ids.reduce((s,id)=>s+MENU.find(m=>m.id===id).price*staffCart[id],0);
 
-  const nvLabel = staffName || 'NV';
-  const tableNum = table.replace(/[^0-9]/g,'')||table;
+  const nvLabel = escapeHtml(staffName || 'NV');
+  const tableNum = escapeHtml(table.replace(/[^0-9]/g,'')||table);
   const nvThemStr = tableNum ? `ĂN TẠI CHỖ — BÀN ${tableNum}` : 'MANG VỀ';
   const msgBep=[
     `┌─────────────────────`,
@@ -3407,7 +3438,7 @@ async function staffSendOrder(){
     `│ 👤 NV: <b>${nvLabel}</b> | ⏰ <b>${timeStr}</b>`,
     `├─────────────────────`,
     ...itemLines.split('\n').map(l=>`│ ${l}`),
-    note ? `├─────────────────────\n│ 📝 <i>${note}</i>` : null,
+    note ? `├─────────────────────\n│ 📝 <i>${escapeHtml(note)}</i>` : null,
     `└─────────────────────`,
   ].filter(Boolean).join('\n');
 
@@ -3558,6 +3589,41 @@ function getTodayKey(){
   return `atieu_orders_${d.getFullYear()}_${d.getMonth()+1}_${d.getDate()}`;
 }
 
+// ── ĐỒNG BỘ DOANH THU LÊN MÁY CHỦ ──
+// Trước đây doanh thu chỉ nằm trong localStorage của đúng MỘT máy: đơn khách đặt
+// từ điện thoại khách không vào tab Doanh thu, admin không bấm cập nhật trạng thái
+// được, và xoá bộ nhớ trình duyệt là mất sạch. Giờ mỗi đơn đẩy thêm lên Firebase,
+// tab Doanh thu gộp dữ liệu máy chủ với dữ liệu máy này.
+function getTodayFbKey(){ return getTodayKey().replace('atieu_orders_',''); }
+
+function pushOrderToServer(rec){
+  try{
+    fetch(`${FB_URL}/revenue/${getTodayFbKey()}/${rec.id}.json`,{
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({...rec, savedAt: Date.now()})
+    }).catch(()=>{});
+  }catch(e){}
+}
+
+// Gộp đơn trên máy chủ với đơn lưu ở máy này (trùng mã đơn thì gộp làm một)
+async function getTodayOrdersMerged(){
+  let local=[];
+  try{ local = JSON.parse(localStorage.getItem(getTodayKey())||'[]'); }catch(e){}
+  let remote=[];
+  try{
+    const r = await fetch(`${FB_URL}/revenue/${getTodayFbKey()}.json?t=${Date.now()}`);
+    if(r.ok){ const d = await r.json(); if(d) remote = Object.values(d); }
+  }catch(e){}
+  const byId = {};
+  const put = o => {
+    if(!o || !o.id) return;
+    const cur = byId[o.id];
+    byId[o.id] = cur ? {...cur, ...o, cancelled: !!(cur.cancelled || o.cancelled)} : {...o};
+  };
+  remote.forEach(put); local.forEach(put);
+  return Object.values(byId).sort((a,b)=>String(a.time||'').localeCompare(String(b.time||'')));
+}
+
 function saveOrderFromSnap(snap){
   const key = getTodayKey();
   let orders = [];
@@ -3572,6 +3638,7 @@ function saveOrderFromSnap(snap){
     cancelled: false
   });
   localStorage.setItem(key, JSON.stringify(orders));
+  pushOrderToServer(orders[orders.length-1]);
 }
 
 function saveOrder(orderId, total, items, type){
@@ -3588,6 +3655,7 @@ function saveOrder(orderId, total, items, type){
     cancelled:false
   });
   localStorage.setItem(key,JSON.stringify(orders));
+  pushOrderToServer(orders[orders.length-1]);
 }
 
 function cancelOrderInHistory(orderId){
@@ -3596,12 +3664,17 @@ function cancelOrderInHistory(orderId){
   try{orders=JSON.parse(localStorage.getItem(key)||'[]');}catch(e){}
   orders=orders.map(o=>o.id===orderId?{...o,cancelled:true}:o);
   localStorage.setItem(key,JSON.stringify(orders));
+  // Báo máy chủ để mọi máy đều thấy đơn này đã huỷ
+  try{
+    fetch(`${FB_URL}/revenue/${getTodayFbKey()}/${orderId}.json`,{
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cancelled:true, savedAt:Date.now()})
+    }).catch(()=>{});
+  }catch(e){}
 }
 
-function renderRevenue(){
-  const key=getTodayKey();
-  let orders=[];
-  try{orders=JSON.parse(localStorage.getItem(key)||'[]');}catch(e){}
+async function renderRevenue(){
+  const orders = await getTodayOrdersMerged();
 
   const valid=orders.filter(o=>!o.cancelled);
   const cancelled=orders.filter(o=>o.cancelled);
@@ -3667,10 +3740,8 @@ async function updateOrderStatus(orderId, status) {
   renderRevenue();
 }
 
-function exportExcel(){
-  const key = getTodayKey();
-  let orders = [];
-  try{ orders = JSON.parse(localStorage.getItem(key)||'[]'); }catch(e){}
+async function exportExcel(){
+  const orders = await getTodayOrdersMerged();
 
   if(!orders.length){ alert('Không có dữ liệu hôm nay!'); return; }
 
@@ -3713,10 +3784,11 @@ function exportExcel(){
   URL.revokeObjectURL(url);
 }
 
-function clearTodayOrders(){
-  if(!confirm('Xóa toàn bộ dữ liệu đơn hàng hôm nay?')) return;
+async function clearTodayOrders(){
+  if(!confirm('Xóa toàn bộ dữ liệu đơn hàng hôm nay?\n\n⚠️ Xoá trên MÁY CHỦ - mọi máy đều mất dữ liệu này, không khôi phục được.')) return;
   localStorage.removeItem(getTodayKey());
-  renderRevenue();
+  try{ await fetch(`${FB_URL}/revenue/${getTodayFbKey()}.json`,{method:'DELETE'}); }catch(e){}
+  await renderRevenue();
   showToast();
 }
 
@@ -4155,7 +4227,7 @@ function renderHistory(){
   el.innerHTML = history.map((o,i)=>{
     const isShip = o.orderType==='ship';
     const total = (o.sub||0) + snapShipFee(o);
-    const itemList = o.items ? o.items.slice(0,3).map(item=>`${item.e} ${item.name} ×${item.qty}`).join(', ') : '';
+    const itemList = o.items ? o.items.slice(0,3).map(item=>`${escapeHtml(item.e)} ${escapeHtml(item.name)} ×${item.qty}`).join(', ') : '';
     const more = o.items && o.items.length > 3 ? ` +${o.items.length-3} món` : '';
     return `
     <div style="background:#fff;border-radius:14px;padding:13px;margin-bottom:10px;box-shadow:0 1px 6px rgba(0,0,0,0.07);">
