@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.atieu.twa",
+        "sha256_cert_fingerprints": ["A8:C9:BE:A3:6C:AE:2B:D2:29:05:BE:3A:C7:33:E3:F6:EE:51:5C:DC:73:59:81:95:E6:9C:0C:A5:A6:84:E4:0D"]
+      }
+    }]
