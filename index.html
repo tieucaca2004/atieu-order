@@ -723,6 +723,15 @@ input[type=file]{display:none;}
       </div>
 
       <div class="admin-section" style="margin-bottom:12px;">
+        <div class="admin-section-title">📡 Kiểm tra Telegram</div>
+        <div style="padding:12px 14px;">
+          <div style="font-size:11px;color:#888;margin-bottom:9px;line-height:1.5;">Gửi 1 tin thử vào từng nhóm và báo đúng lỗi nếu nhóm nào không nhận được.</div>
+          <button onclick="testTelegram()" style="width:100%;padding:11px;background:#1565C0;color:#fff;border:none;border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">📡 Kiểm tra 4 nhóm Telegram</button>
+          <div id="tgTestResult" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="admin-section" style="margin-bottom:12px;">
         <div class="admin-section-title">🔑 Mật khẩu nhân viên</div>
         <div style="padding:12px 14px;display:flex;gap:8px;align-items:center;">
           <input id="newStaffPw" class="a-input" type="text" placeholder="Nhập mật khẩu mới cho NV" style="flex:1;margin:0;">
@@ -3541,6 +3550,51 @@ function renderStaffNameDropdown(){
     input.parentNode.appendChild(dl);
   }
   dl.innerHTML = list.map(n=>`<option value="${n}">`).join('');
+}
+
+// ── KIỂM TRA KẾT NỐI TELEGRAM ──
+// Gửi thẳng tới Telegram (không qua máy chủ trung gian) để đọc được đúng câu báo lỗi.
+// Quan trọng nhất: nếu một nhóm bị nâng cấp thành siêu nhóm thì MÃ NHÓM ĐỔI, mã cũ
+// chết dù bot vẫn còn trong nhóm - Telegram trả về mã mới ở parameters.migrate_to_chat_id.
+async function testTelegram(){
+  const box = document.getElementById('tgTestResult');
+  if(!box) return;
+  box.innerHTML = '<div style="font-size:12px;color:#888;">⏳ Đang gửi tin thử...</div>';
+  const tokenMap = {order:'order', bep:'order', tn:'tn', ship:'ship'};
+  const dests = [
+    {type:'order', ten:'Chủ quán'},
+    {type:'bep',   ten:'Nhóm Bếp'},
+    {type:'tn',    ten:'Nhóm Thu Ngân'},
+    {type:'ship',  ten:'Nhóm Shipper'},
+  ];
+  let html = '';
+  for(const d of dests){
+    const botKey = tokenMap[d.type];
+    const token = TG_TOKENS[botKey];
+    const chatId = TG_CHATS[d.type];
+    let ok = false, mota = '', maMoi = '';
+    try{
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({chat_id: chatId, text: `📡 Tin kiểm tra kết nối — ${d.ten}`})
+      });
+      const data = await res.json();
+      ok = !!data.ok;
+      mota = data.description || ('Lỗi HTTP ' + res.status);
+      if(data.parameters && data.parameters.migrate_to_chat_id){
+        maMoi = String(data.parameters.migrate_to_chat_id);
+      }
+    }catch(e){
+      mota = 'Không gọi được Telegram: ' + e.message;
+    }
+    html += `<div style="border:1px solid ${ok?'#1D9E75':'#e74c3c'};background:${ok?'#E1F5EE':'#fde8e8'};border-radius:9px;padding:9px 11px;margin-bottom:7px;">
+      <div style="font-size:12px;font-weight:700;color:${ok?'#1D9E75':'#c0392b'};">${ok?'✅':'❌'} ${d.ten}</div>
+      <div style="font-size:10px;color:#888;margin-top:2px;text-transform:none;">bot: ${escapeHtml(botKey)} · mã nhóm: ${escapeHtml(chatId)}</div>
+      ${ok?'':`<div style="font-size:11px;color:#c0392b;margin-top:4px;text-transform:none;">Lỗi: ${escapeHtml(mota)}</div>`}
+      ${maMoi?`<div style="font-size:11px;color:#c0392b;font-weight:700;margin-top:4px;text-transform:none;">⚠️ Nhóm đã đổi mã! Mã MỚI: <span style="user-select:all;background:#fff;padding:1px 5px;border-radius:4px;">${escapeHtml(maMoi)}</span><br>Gửi mã này cho kỹ thuật để cập nhật.</div>`:''}
+    </div>`;
+  }
+  box.innerHTML = html;
 }
 
 function updateStaffPw(){
